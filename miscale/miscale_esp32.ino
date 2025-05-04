@@ -1,4 +1,3 @@
-// WARNING use Arduino ESP32 library version 1.0.4, newer is unstable
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
@@ -8,14 +7,21 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 #include <Timestamps.h>
-#include <Battery18650Stats.h>
+#include <Inkplate.h>
+#include <ESPDateTime.h>
+//#include <Battery18650Stats.h>
 
 // Scale MAC address, please use lowercase letters
-#define scale_mac_addr "00:00:00:00:00:00"
+#define scale_mac_addr "0c:95:41:d1:0d:cf"
+
+#define TZ_Europe_Warsaw PSTR("CET-1CEST,M3.5.0,M10.5.0/3")
 
 // Network details
-const char* ssid = "ssid_name";
-const char* password = "password";
+const char* ssid = "ssid-change";
+const char* password = "password-change";
+
+// Initialize Inkplate object
+Inkplate display;
 
 // Synchronization status LED, for LOLIN32 D32 PRO is pin 5
 const int led_pin = 5;
@@ -24,13 +30,13 @@ const int led_pin = 5;
 Timestamps ts(0);
 
 // Battery voltage measurement, for LOLIN32 D32 PRO is pin 35
-Battery18650Stats battery(35);
+//Battery18650Stats battery(35);
 
 // MQTT details
-const char* mqtt_server = "ip_address";
+const char* mqtt_server = "ip-server-change";
 const int mqtt_port = 1883;
 const char* mqtt_userName = "admin";
-const char* mqtt_userPass = "user_password";
+const char* mqtt_userPass = "password-change";
 const char* clientId = "esp32_scale";
 const char* mqtt_attributes = "data"; 
 
@@ -49,10 +55,26 @@ int16_t stoi2(String input, uint16_t index1) {
 }
 
 void goToDeepSleep() {
-  // Deep sleep for 7 minutes
+  // Deep sleep for 5 minutes
   Serial.println("* Waiting for next scan, going to sleep");
-  esp_sleep_enable_timer_wakeup(7 * 60 * 1000000);
+  esp_sleep_enable_timer_wakeup(5 * 60 * 1000000);
   esp_deep_sleep_start();
+}
+
+void displayDraw() {
+    // Initialize Inkplate library
+    display.clearDisplay();
+    display.setTextSize(2);
+    display.setTextColor(INKPLATE2_BLACK);
+    display.setCursor(0, 0);
+    display.println("Export2Garmin");
+    display.setTextColor(INKPLATE2_RED);
+    display.println(publish_data.c_str());
+    display.setTextColor(INKPLATE2_BLACK);
+    DateTimeParts p = DateTime.getParts();
+    display.printf("%04d/%02d/%02d \n %02d:%02d", p.getYear(),
+              p.getMonth(), p.getMonthDay(), p.getHours(), p.getMinutes());
+    display.display();
 }
 
 void StartESP32() {
@@ -188,16 +210,17 @@ void ScanBLE() {
       publish_data += String(Weight, 1);
       publish_data += String(";");
       publish_data += String(Impedance, 0);
-      publish_data += String(";");
-      publish_data += String(battery.getBatteryVolts(), 1);
-      publish_data += String(";");
-      publish_data += String(battery.getBatteryChargeLevel());
+      //publish_data += String(";");
+      //publish_data += String(battery.getBatteryVolts(), 1);
+      //publish_data += String(";");
+      //publish_data += String(battery.getBatteryChargeLevel());
 
       // Send data to MQTT broker and let app figure out the rest
       connectMQTT();
       mqtt_client.publish(mqtt_topic_attributes.c_str(), publish_data.c_str(), true);
       Serial.print("* Publishing MQTT data: ");
       Serial.println(publish_data.c_str());
+      displayDraw();
     }
     else {
       errorLED_scan();
@@ -206,6 +229,20 @@ void ScanBLE() {
 }
 
 void setup() {
+  display.begin();
+  DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
+  DateTime.begin(/* timeout param */);
+  DateTime.now();
+  DateTime.format(DateFormatter::DATE_ONLY);
+  DateTime.format(DateFormatter::TIME_ONLY);
+  delay(2000);
+  if (!DateTime.isTimeValid()) {
+    Serial.println("Failed to get time from server.");
+  } else {
+    Serial.printf("Date Now is %s\n", DateTime.toISOString().c_str());
+    Serial.printf("Timestamp is %ld\n", DateTime.now());
+  }
+  
   StartESP32();
   ScanBLE();
   goToDeepSleep();
