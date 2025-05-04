@@ -12,7 +12,7 @@
 //#include <Battery18650Stats.h>
 
 // Scale MAC address, please use lowercase letters
-#define scale_mac_addr "0c:95:41:d1:0d:cf"
+#define scale_mac_addr "00:00:00:00:00:00"
 
 #define TZ_Europe_Warsaw PSTR("CET-1CEST,M3.5.0,M10.5.0/3")
 
