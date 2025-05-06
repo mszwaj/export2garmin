@@ -1,42 +1,39 @@
 #include <Arduino.h>
 #include <PubSubClient.h>
 #include <WiFiUdp.h>
-#include <ArduinoOTA.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 #include <Timestamps.h>
 #include <Inkplate.h>
-#include <ESPDateTime.h>
-//#include <Battery18650Stats.h>
+#include <time.h>
+#include <sntp.h>
 
 // Scale MAC address, please use lowercase letters
-#define scale_mac_addr "00:00:00:00:00:00"
-
-#define TZ_Europe_Warsaw PSTR("CET-1CEST,M3.5.0,M10.5.0/3")
+#define scale_mac_addr "MiScale_MAC_CHANGE"
 
 // Network details
-const char* ssid = "ssid-change";
-const char* password = "password-change";
+const char* ssid = "WiFi_ssid_CHANGE";
+const char* password = "WiFi_password_CHANGE";
+
+// // time.h details
+// const char* ntpServer1 = "pool.ntp.org";
+// const char* ntpServer2 = "time.nist.gov";
+// const long  gmtOffset_sec = 3600;
+// const int   daylightOffset_sec = 3600;
 
 // Initialize Inkplate object
 Inkplate display;
 
-// Synchronization status LED, for LOLIN32 D32 PRO is pin 5
-const int led_pin = 5;
-
 // Instantiating object of class Timestamp (time offset is possible in import_data.sh file)
 Timestamps ts(0);
 
-// Battery voltage measurement, for LOLIN32 D32 PRO is pin 35
-//Battery18650Stats battery(35);
-
 // MQTT details
-const char* mqtt_server = "ip-server-change";
+const char* mqtt_server = "mqtt_server_ip_CHANGE";
 const int mqtt_port = 1883;
 const char* mqtt_userName = "admin";
-const char* mqtt_userPass = "password-change";
+const char* mqtt_userPass = "mqtt_password_CHANGE";
 const char* clientId = "esp32_scale";
 const char* mqtt_attributes = "data"; 
 
@@ -47,11 +44,23 @@ String publish_data;
 WiFiClient espClient;
 PubSubClient mqtt_client(espClient);
 
+char cetTimeStr[25];
+
 int16_t stoi(String input, uint16_t index1) {
     return (int16_t)(strtol(input.substring(index1, index1+2).c_str(), NULL, 16));
 }
 int16_t stoi2(String input, uint16_t index1) {
     return (int16_t)(strtol((input.substring(index1+2, index1+4) + input.substring(index1, index1+2)).c_str(), NULL, 16));
+}
+
+void StartESP32() {
+  // Initializing serial port for debugging purposes, version info
+  Serial.begin(115200);
+  Serial.println();
+  Serial.println("===========================================");
+  Serial.println("Export 2 Garmin Connect (Inkplate2 edition)");
+  Serial.println("===========================================");
+  Serial.println();
 }
 
 void goToDeepSleep() {
@@ -62,43 +71,46 @@ void goToDeepSleep() {
 }
 
 void displayDraw() {
-    // Initialize Inkplate library
-    display.clearDisplay();
-    display.setTextSize(2);
-    display.setTextColor(INKPLATE2_BLACK);
-    display.setCursor(0, 0);
-    display.println("Export2Garmin");
-    display.setTextColor(INKPLATE2_RED);
-    display.println(publish_data.c_str());
-    display.setTextColor(INKPLATE2_BLACK);
-    DateTimeParts p = DateTime.getParts();
-    display.printf("%04d/%02d/%02d \n %02d:%02d", p.getYear(),
-              p.getMonth(), p.getMonthDay(), p.getHours(), p.getMinutes());
-    display.display();
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(INKPLATE2_BLACK);
+  display.setCursor(0, 0);
+  display.println("Export2Garmin");
+  display.setTextSize(2);
+  display.setTextColor(INKPLATE2_RED);
+  display.println(publish_data.c_str());
+  display.setTextColor(INKPLATE2_BLACK);
+
+  // Convert C-style string to Arduino String object
+  String fullDateTime = String(cetTimeStr);
+    
+  // Find the space between date and time
+  int spacePos = fullDateTime.indexOf(' ');
+    
+  if (spacePos != -1) {
+    // Extract date and time using substring
+    String dateStr = fullDateTime.substring(0, spacePos);
+    String timeStr = fullDateTime.substring(spacePos + 1);
+    display.print("Date: ");
+    display.println(dateStr);
+    display.print("Time: ");
+    display.println(timeStr);
+  } else {
+    // Fall back to original display if parsing fails
+    display.println(cetTimeStr);
+  }
+  display.display();
 }
 
-void StartESP32() {
-  // LED indicate start ESP32, is on for 0.25 second
-  pinMode(led_pin, OUTPUT); 
-  digitalWrite(led_pin, LOW);
-  delay(250);
-  digitalWrite(led_pin, HIGH);
-
-  // Initializing serial port for debugging purposes, version info
-  Serial.begin(115200);
-  Serial.println();
-  Serial.println("================================================");
-  Serial.println("Export 2 Garmin Connect v2.0 (miscale_esp32.ino)");
-  Serial.println("================================================");
-  Serial.println();
-}
-
-void errorLED_connect() {
-  pinMode(led_pin, OUTPUT); 
-  digitalWrite(led_pin, LOW);
-  delay(5000);
-  Serial.println("failed");
-  goToDeepSleep();
+// Function to convert a UNIX timestamp to CET time string in YYYY-MM-DD HH:MM:SS format
+void unixTimestampToCETString(time_t timestamp, char* buffer, size_t bufferSize) {
+  struct tm timeinfo;
+  
+  // Convert timestamp to tm struct according to local timezone (CET)
+  localtime_r(&timestamp, &timeinfo);
+  
+  // Format the time as YYYY-MM-DD HH:MM:SS
+  strftime(buffer, bufferSize, "%Y-%m-%d %H:%M:%S", &timeinfo);
 }
 
 void connectWiFi() {
@@ -142,6 +154,16 @@ void connectMQTT() {
   }
 }
 
+void errorLED_connect() {
+  Serial.println("failed");
+  goToDeepSleep();
+}
+
+void errorLED_scan() {
+  Serial.println("* Reading BLE data incomplete, finished BLE scan");
+  goToDeepSleep();
+}
+
 class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
       Serial.print("  BLE device found with address: ");
@@ -156,14 +178,6 @@ class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
       }      
    }
 };
-
-void errorLED_scan() {
-  pinMode(led_pin, OUTPUT); 
-  digitalWrite(led_pin, LOW);
-  delay(5000);
-  Serial.println("* Reading BLE data incomplete, finished BLE scan");
-  goToDeepSleep();
-}
 
 void ScanBLE() {
   Serial.println("* Starting BLE scan:");
@@ -194,15 +208,15 @@ void ScanBLE() {
     if (Impedance > 0) {
       int Unix_time = ts.getTimestampUNIX(stoi2(hex, 4), stoi(hex, 8), stoi(hex, 10), stoi(hex, 12), stoi(hex, 14), stoi(hex, 16));  
       
-      // LED blinking for 0.75 second, indicate finish reading BLE data
-      Serial.println("* Reading BLE data complete, finished BLE scan");
-      digitalWrite(led_pin, LOW);
-      delay(250);
-      digitalWrite(led_pin, HIGH);
-      delay(250);
-      digitalWrite(led_pin, LOW);
-      delay(250);
-      digitalWrite(led_pin, HIGH);
+      // Convert UNIX timestamp to CET time
+
+      unixTimestampToCETString(Unix_time, cetTimeStr, sizeof(cetTimeStr));
+      
+      Serial.print("UNIX timestamp: ");
+      Serial.println(Unix_time);
+      Serial.print("CET time: ");
+      Serial.println(cetTimeStr);
+
 
       // Prepare to send raw values
       publish_data += String(Unix_time);
@@ -210,10 +224,6 @@ void ScanBLE() {
       publish_data += String(Weight, 1);
       publish_data += String(";");
       publish_data += String(Impedance, 0);
-      //publish_data += String(";");
-      //publish_data += String(battery.getBatteryVolts(), 1);
-      //publish_data += String(";");
-      //publish_data += String(battery.getBatteryChargeLevel());
 
       // Send data to MQTT broker and let app figure out the rest
       connectMQTT();
@@ -230,19 +240,6 @@ void ScanBLE() {
 
 void setup() {
   display.begin();
-  DateTime.setTimeZone("CET-1CEST,M3.5.0,M10.5.0/3");
-  DateTime.begin(/* timeout param */);
-  DateTime.now();
-  DateTime.format(DateFormatter::DATE_ONLY);
-  DateTime.format(DateFormatter::TIME_ONLY);
-  delay(2000);
-  if (!DateTime.isTimeValid()) {
-    Serial.println("Failed to get time from server.");
-  } else {
-    Serial.printf("Date Now is %s\n", DateTime.toISOString().c_str());
-    Serial.printf("Timestamp is %ld\n", DateTime.now());
-  }
-  
   StartESP32();
   ScanBLE();
   goToDeepSleep();
